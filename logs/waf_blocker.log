@@ -1,0 +1,17 @@
+2025-08-11 17:01:51,809 WARNING --apply was used but WAF_BLOCKER_CONFIRM=1 is not set. Running in dry-run mode for safety.
+2025-08-11 17:08:13,819 WARNING --apply was used but WAF_BLOCKER_CONFIRM=1 is not set. Running in dry-run mode for safety.
+2025-08-12 11:46:24,115 INFO Unblock IP 192.168.98.34 (mode=iptables) [invalid_ip]
+2025-08-12 11:46:27,841 INFO Unblock IP 192.168.98.40 (mode=iptables) [invalid_ip]
+2025-08-13 14:41:58,974 INFO Unblock IP 192.168.98.40 (mode=iptables) [invalid_ip]
+2025-08-13 14:56:06,774 WARNING CPU usage exceeded 5% - exiting early.
+2025-08-13 14:58:40,634 WARNING CPU usage exceeded 5% - exiting early.
+2025-08-18 10:41:15,771 WARNING CPU usage exceeded 5% - exiting early.
+2025-08-18 11:03:24,156 WARNING CPU usage exceeded 5% - exiting early.
+2025-08-18 11:09:05,594 WARNING CPU usage exceeded 5% - exiting early.
+2025-08-18 11:13:56,373 WARNING CPU usage exceeded 5% - exiting early.
+2025-08-18 11:40:52,517 WARNING CPU usage exceeded 5% - exiting early.
+2025-08-18 11:42:56,371 WARNING CPU usage exceeded 5% - exiting early.
+2025-08-18 11:49:00,547 INFO Unblock IP 192.168.98.40 (mode=iptables) [invalid_ip]
+2025-08-18 11:51:36,380 WARNING CPU usage exceeded 5% - exiting early.
+2025-08-18 12:05:08,042 WARNING CPU usage exceeded 5% - exiting early.
+2025-08-18 12:05:56,020 WARNING CPU usage exceeded 5% - exiting early.

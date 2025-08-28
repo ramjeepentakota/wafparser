@@ -1,0 +1,32 @@
+# Simplified waf_blocker configuration
+
+# Path to the ModSecurity/WAF audit log (single file)
+waf_log: /home/vboxuser/Desktop/modsec_audit.log_040625
+
+# Output directory for daily CSV reports (modsec_output_YYYY-MM-DD.csv)
+output_dir: output/
+
+# Indicators and whitelists
+attack_indicators: attack_indicators.txt
+url_whitelist: url_whitelist.txt
+ip_whitelist: ip_whitelist.txt
+
+
+# Logging
+log_dir: logs/
+log_level: INFO
+
+# Resource limits (safety)
+max_cpu_percent: 5           # Max CPU usage percent
+max_memory_mb: 256            # Max memory usage in MB
+
+# Stateful log offsets
+state_file: state/waf_blocker_state.json
+
+# Service configuration
+service:
+  host: 127.0.0.1
+  port: 8085
+  # Optional background scheduler
+  # auto_run_minutes: 15
+  # auto_apply: false
