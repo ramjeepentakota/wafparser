@@ -29,7 +29,6 @@ def load_list_file(path):
 def is_valid_ip(ip):
     try:
         result = ipaddress.ip_address(ip)
-        # Allow ALL IPv4 and IPv6 addresses, including private
         return True
     except Exception:
         return False
@@ -69,6 +68,7 @@ def parse_transaction(lines):
             section[block].append(line)
     if not block_id:
         return None
+    FIELDNAMES = ['tx_id', 'timestamp', 'client_ip', 'x_forwarded_for', 'host', 'method', 'url', 'url_type', 'response_code', 'anomaly_score', 'severity', 'rule_ids', 'messages', 'user_agent', 'is_vm_scan', 'confirmed_attack']
     tx = {
         'tx_id': block_id,
         'timestamp': '',
@@ -95,6 +95,7 @@ def parse_transaction(lines):
             tx['client_ip'] = m.group(3)
             tx['host'] = m.group(5)
     b = section.get('B', [])
+    found_user_agent = False
     for l in b:
         l = l.strip()
         m = re.match(r'([A-Z]{3,10})\s+([^\s]+)\s+HTTP/\d\.\d', l)
@@ -105,10 +106,13 @@ def parse_transaction(lines):
             continue
         if l.lower().startswith('user-agent:'):
             tx['user_agent'] = l.split(':',1)[1].strip()
+            found_user_agent = True
         if l.lower().startswith('host:'):
             tx['host'] = l.split(':',1)[1].strip()
         if l.lower().startswith('x-forwarded-for:'):
             tx['x_forwarded_for'] = l.split(':',1)[1].strip()
+    if not found_user_agent:
+        tx['user_agent'] = ''
     f = section.get('F', [])
     for l in f:
         m = re.search(r'HTTP/\d\.\d\s+(\d{3})', l)
@@ -128,9 +132,14 @@ def parse_transaction(lines):
     tx['messages'] = ';'.join(messages) if messages else ''
     if 'scanner' in tx['user_agent'].lower() or 'zgrab' in tx['user_agent'].lower():
         tx['is_vm_scan'] = True
-    for k in tx:
-        if tx[k] is None:
+    # --- FORCE: fill every field in order, as str, never missing! ---
+    for k in FIELDNAMES:
+        if k not in tx or tx[k] is None:
             tx[k] = ''
+        # Ensure bool type for is_vm_scan, confirmed_attack (for row builder)
+        if k in ['is_vm_scan','confirmed_attack']:
+            if isinstance(tx[k], str):
+                tx[k] = tx[k].lower() == 'true' or tx[k]=='1'
     return tx
 
 def detect_url_type(url):
@@ -143,7 +152,6 @@ def detect_url_type(url):
     return 'OTHER'
 
 def live_log_monitor(log_path, callback):
-    """ Continuously monitor a log file for appended data, calling callback(blocks) on new full transactions """
     print(f"Live mode: Monitoring {log_path} for new transactions ...")
     with open(log_path, 'r', encoding='utf-8', errors='ignore') as f:
         f.seek(0, os.SEEK_END)
@@ -158,7 +166,6 @@ def live_log_monitor(log_path, callback):
                     callback(buffer)
                     buffer = []
             buffer.append(line.rstrip('\n'))
-        # On exit, flush (for completeness)
         if buffer:
             callback(buffer)
 
@@ -181,10 +188,34 @@ def main():
     today_str = datetime.now(timezone.utc).strftime('%Y-%m-%d')
     output_csv = output_dir / f"modsec_output_{today_str}.csv"
     FIELDNAMES = ['tx_id', 'timestamp', 'client_ip', 'x_forwarded_for', 'host', 'method', 'url', 'url_type', 'response_code', 'anomaly_score', 'severity', 'rule_ids', 'messages', 'user_agent', 'is_vm_scan', 'confirmed_attack']
-    
+
     def is_url_whitelisted(url, whitelist):
-        # Direct full match; can extend to supports regex/glob if desired
         return url in whitelist
+
+    def safe_bool(val):
+        if isinstance(val, bool):
+            return 'True' if val else 'False'
+        if isinstance(val, str):
+            v = val.strip().lower()
+            if v in ('true','yes','1'): return 'True'
+            if v in ('false','no','0',''): return 'False'
+        if isinstance(val, int) or isinstance(val, float):
+            return 'True' if val else 'False'
+        return 'False'
+
+    def safe_str(val):
+        if val is None:
+            return ''
+        return str(val).replace('\n', ' ').replace('\r', ' ')
+
+    def get_row(tx):
+        row = []
+        for field in FIELDNAMES:
+            if field in ['is_vm_scan','confirmed_attack']:
+                row.append(safe_bool(tx.get(field,'')))
+            else:
+                row.append(safe_str(tx.get(field,'')))
+        return row
 
     def process_tx_and_output(lines, writer):
         tx = parse_transaction(lines)
@@ -192,23 +223,13 @@ def main():
             is_ip_white = is_whitelisted(tx['client_ip'], ip_whitelist)
             is_url_white = is_url_whitelisted(tx['url'], url_whitelist)
             tx['confirmed_attack'] = int(tx['anomaly_score']) >= anomaly_threshold and not (is_ip_white or is_url_white)
-            # Strict row validation: only FIELDNAMES, all present, no extra keys, ensure type safety
-            outrow = {name: '' for name in FIELDNAMES}  # Initialize all columns
-            for name in FIELDNAMES:
-                val = tx.get(name, '')
-                if isinstance(val, bool):
-                    val = 'True' if val else 'False'
-                if val is None:
-                    val = ''
-                outrow[name] = str(val)
-            # Optionally warn about extra columns
-            extra_keys = [k for k in tx.keys() if k not in FIELDNAMES]
-            if extra_keys:
-                print(f"Warning: Skipping extra columns not in FIELDNAMES: {extra_keys}")
-            writer.writerow(outrow)
+            row = get_row(tx)
+            if len(row) != len(FIELDNAMES):
+                print(f"CSV ROW ERROR: length mismatch for TX {tx.get('tx_id','')}")
+                return
+            writer.writerow(dict(zip(FIELDNAMES, row)))
             print(f"TX {tx['tx_id']} | IP: {tx['client_ip']} | Score {tx['anomaly_score']} | Attack: {tx['confirmed_attack']}")
 
-    # Read config for log mode and path
     live_mode = config.get('live_mode', False)
     log_file = config.get('waf_log', "modsecurity_120825_PIDC_YI90FOLWB02.log")
 
@@ -229,15 +250,9 @@ def main():
         print(f"Scanning {len(log_files)} file(s): ", log_files)
         all_count = 0
         attacker_ips = set()
-        vmscan_ips = set()  # Collect whitelisted VMScan IPs for exclusion
-        # Optionally, populate vmscan_ips by parsing trusted scanner IPs file if you have one
-
+        vmscan_ips = set()
         def is_vmscan_ip(ip):
-            # Example: treat all whitelisted IPs with 'scan' in the comment as vmscan IPs.
-            # For now, just use the whitelist, but adjust as needed.
             return is_whitelisted(ip, ip_whitelist)
-        
-        # Centralized processing that builds both CSV and attacker IP set reliably
         csv_exists = output_csv.exists()
         existing_tx_ids = set()
         if csv_exists:
@@ -253,25 +268,15 @@ def main():
                 tx = parse_transaction(lines)
                 if tx:
                     if tx['tx_id'] in existing_tx_ids:
-                        # Skip duplicate
                         return
                     is_ip_white = is_whitelisted(tx['client_ip'], ip_whitelist)
                     is_url_white = tx['url'] in url_whitelist
                     tx['confirmed_attack'] = int(tx['anomaly_score']) >= anomaly_threshold and not (is_ip_white or is_url_white)
-                    # Strict row validation: only FIELDNAMES, all present, no extra keys, ensure type safety
-                    outrow = {name: '' for name in FIELDNAMES}  # Initialize all columns
-                    for name in FIELDNAMES:
-                        val = tx.get(name, '')
-                        if isinstance(val, bool):
-                            val = 'True' if val else 'False'
-                        if val is None:
-                            val = ''
-                        outrow[name] = str(val)
-                    # Optionally warn about extra columns
-                    extra_keys = [k for k in tx.keys() if k not in FIELDNAMES]
-                    if extra_keys:
-                        print(f"Warning: Skipping extra columns not in FIELDNAMES: {extra_keys}")
-                    writer.writerow(outrow)
+                    row = get_row(tx)
+                    if len(row) != len(FIELDNAMES):
+                        print(f"CSV ROW ERROR: length mismatch for TX {tx.get('tx_id','')}")
+                        return
+                    writer.writerow(dict(zip(FIELDNAMES, row)))
                     existing_tx_ids.add(tx['tx_id'])
                     print(f"TX {tx['tx_id']} | IP: {tx['client_ip']} | Score {tx['anomaly_score']} | Attack: {tx['confirmed_attack']}")
                     if tx['confirmed_attack'] and is_valid_ip(tx['client_ip']) and not is_whitelisted(tx['client_ip'], ip_whitelist) and not tx['is_vm_scan']:
@@ -286,11 +291,10 @@ def main():
                 all_count += file_tx_count
         print(f"Total parsed blocks: {all_count}")
         print(f"Report written to: {output_csv}")
-        # --- CREATE BLOCK SCRIPT ---
         print(f"DEBUG: {len(attacker_ips)} attacker IPs collected: {attacker_ips}")
         if attacker_ips:
             script_filename = output_dir / f"blocklist-{datetime.now().strftime('%d-%m-%Y')}.sh"
-            script_filename = script_filename.resolve()  # Absolute full path
+            script_filename = script_filename.resolve()
             print(f"DEBUG: Bash script will be written to: {script_filename}")
             script_exists = script_filename.exists()
             existing_ips_in_script = set()
